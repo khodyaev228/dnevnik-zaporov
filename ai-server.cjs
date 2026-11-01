@@ -8,9 +8,10 @@ let month='',spent=0,reserved=0;
 const clients=new Map();
 function reply(res,status,data){res.writeHead(status,{'Content-Type':'application/json; charset=utf-8','Access-Control-Allow-Origin':ORIGIN,'Vary':'Origin','Cache-Control':'no-store'});res.end(JSON.stringify(data))}
 http.createServer(async(req,res)=>{
+ const path=new URL(req.url,'http://localhost').pathname;
  if(req.method==='OPTIONS'){res.writeHead(204,{'Access-Control-Allow-Origin':ORIGIN,'Access-Control-Allow-Methods':'POST, OPTIONS','Access-Control-Allow-Headers':'Content-Type','Vary':'Origin'});return res.end()}
- if((req.url==='/'||req.url==='/health')&&req.method==='GET')return reply(res,200,{ok:true,configured:!!process.env.OPENAI_API_KEY,service:'PIPISKA AI'});
- if(req.url!=='/check'||req.method!=='POST')return reply(res,404,{error:'not_found'});
+ if((path==='/'||path==='/health')&&req.method==='GET')return reply(res,200,{ok:true,configured:!!process.env.OPENAI_API_KEY,service:'PIPISKA AI'});
+ if(path!=='/check'||req.method!=='POST')return reply(res,404,{error:'not_found'});
  if(req.headers.origin!==ORIGIN)return reply(res,403,{error:'origin'});
  if(!process.env.OPENAI_API_KEY)return reply(res,503,{error:'not_configured'});
  const now=new Date(),currentMonth=now.toISOString().slice(0,7);

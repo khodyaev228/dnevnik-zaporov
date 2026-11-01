@@ -18,8 +18,15 @@ http.createServer(async(req,res)=>{
  const path=new URL(req.url,'http://localhost').pathname;
  if(req.method==='OPTIONS'){res.writeHead(204,{'Access-Control-Allow-Origin':ORIGIN,'Access-Control-Allow-Methods':'POST, OPTIONS','Access-Control-Allow-Headers':'Content-Type','Vary':'Origin'});return res.end()}
  if((path==='/'||path==='/health')&&req.method==='GET')return reply(res,200,{ok:true,configured:!!process.env.OPENAI_API_KEY,service:'PIPISKA AI'});
- if(!['/check','/translate','/song-search'].includes(path)||req.method!=='POST')return reply(res,404,{error:'not_found'});
+ if(!['/check','/translate','/song-search','/song-excerpt'].includes(path)||req.method!=='POST')return reply(res,404,{error:'not_found'});
  if(req.headers.origin!==ORIGIN)return reply(res,403,{error:'origin'});
+ if(path==='/song-excerpt'){
+  if(!process.env.FIRECRAWL_API_KEY)return reply(res,503,{error:'firecrawl_not_configured'});
+  let raw='';for await(const chunk of req){raw+=chunk;if(raw.length>4000)return reply(res,413,{error:'too_large'})}
+  let url;try{url=new URL(JSON.parse(raw).url)}catch{return reply(res,400,{error:'invalid_url'})}
+  if(url.protocol!=='https:'||!/(^|\.)(genius\.com|musixmatch\.com|azlyrics\.com|lyrics\.com|songmeanings\.com)$/.test(url.hostname))return reply(res,400,{error:'unsupported_source'});
+  try{const r=await fetch('https://api.firecrawl.dev/v2/scrape',{method:'POST',headers:{Authorization:'Bearer '+process.env.FIRECRAWL_API_KEY,'Content-Type':'application/json'},body:JSON.stringify({url:url.href,formats:['markdown'],onlyMainContent:true}),signal:AbortSignal.timeout(18000)});const j=await r.json();if(!r.ok)return reply(res,502,{error:'scrape_failed'});const markdown=String(j.data?.markdown||'');const lines=markdown.split('\n').map(x=>x.replace(/\[[^\]]+\]\([^)]*\)/g,'').replace(/[#*\\>]/g,'').trim()).filter(x=>x.length>15&&!/cookie|privacy|sign in|log in|advertisement|subscribe|copyright/i.test(x));return reply(res,200,{excerpt:lines.slice(0,4).join(' ').slice(0,180),url:url.href})}catch{return reply(res,502,{error:'scrape_failed'})}
+ }
  if(path==='/song-search'){
   if(!process.env.FIRECRAWL_API_KEY)return reply(res,503,{error:'firecrawl_not_configured'});
   let raw='';for await(const chunk of req){raw+=chunk;if(raw.length>4000)return reply(res,413,{error:'too_large'})}

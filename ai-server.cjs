@@ -25,7 +25,19 @@ http.createServer(async(req,res)=>{
   let raw='';for await(const chunk of req){raw+=chunk;if(raw.length>4000)return reply(res,413,{error:'too_large'})}
   let url;try{url=new URL(JSON.parse(raw).url)}catch{return reply(res,400,{error:'invalid_url'})}
   if(url.protocol!=='https:'||!/(^|\.)(genius\.com|musixmatch\.com|azlyrics\.com|lyrics\.com|songmeanings\.com)$/.test(url.hostname))return reply(res,400,{error:'unsupported_source'});
-  try{const r=await fetch('https://api.firecrawl.dev/v2/scrape',{method:'POST',headers:{Authorization:'Bearer '+process.env.FIRECRAWL_API_KEY,'Content-Type':'application/json'},body:JSON.stringify({url:url.href,formats:['markdown'],onlyMainContent:true}),signal:AbortSignal.timeout(18000)});const j=await r.json();if(!r.ok)return reply(res,502,{error:'scrape_failed'});const markdown=String(j.data?.markdown||'');const lines=markdown.split('\n').map(x=>x.replace(/\[[^\]]+\]\([^)]*\)/g,'').replace(/[#*\\>]/g,'').trim()).filter(x=>x.length>15&&!/cookie|privacy|sign in|log in|advertisement|subscribe|copyright/i.test(x));return reply(res,200,{excerpt:lines.slice(0,4).join(' ').slice(0,180),url:url.href})}catch{return reply(res,502,{error:'scrape_failed'})}
+  try{const r=await fetch('https://api.firecrawl.dev/v2/scrape',{method:'POST',headers:{Authorization:'Bearer '+process.env.FIRECRAWL_API_KEY,'Content-Type':'application/json'},body:JSON.stringify({url:url.href,formats:['markdown'],onlyMainContent:true}),signal:AbortSignal.timeout(18000)});const j=await r.json();if(!r.ok)return reply(res,502,{error:'scrape_failed'});const markdown=String(j.data?.markdown||'');
+  const clean=markdown.split('\n').map(line=>line
+    .replace(/!\[[^\]]*\]\([^)]*\)/g,'')
+    .replace(/\[([^\]]+)\]\([^)]*\)/g,'$1')
+    .replace(/https?:\/\/\S+/g,'')
+    .replace(/^\s{0,3}#{1,6}\s*/,'')
+    .replace(/\*\*/g,'')
+    .replace(/^\s*\d+\s+Contributors?\b.*$/i,'')
+    .trim()).filter(line=>line&&!/^\d+\s+Contributors?\b/i.test(line)&&!/^(Embed|You might also like|See .* Live|Get tickets|Sign up|Log in|Read More)$/i.test(line));
+  const startAt=clean.findIndex(line=>/^\[?(Verse\s*\d*|Chorus|Intro|Outro|Bridge|Pre-Chorus|Refrain)\]?/i.test(line));
+  const selected=(startAt>=0?clean.slice(startAt):clean).filter(line=>!/cookie|privacy policy|advertisement|subscribe|copyright|terms of service/i.test(line));
+  const excerpt=selected.join('\n').slice(0,180).trim();
+  return reply(res,200,{excerpt,url:url.href})}catch{return reply(res,502,{error:'scrape_failed'})}
  }
  if(path==='/song-search'){
   if(!process.env.FIRECRAWL_API_KEY)return reply(res,503,{error:'firecrawl_not_configured'});

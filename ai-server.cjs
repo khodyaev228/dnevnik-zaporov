@@ -26,6 +26,8 @@ http.createServer(async(req,res)=>{
   let url;try{url=new URL(JSON.parse(raw).url)}catch{return reply(res,400,{error:'invalid_url'})}
   if(url.protocol!=='https:'||!/(^|\.)(genius\.com|musixmatch\.com|azlyrics\.com|lyrics\.com|songmeanings\.com)$/.test(url.hostname))return reply(res,400,{error:'unsupported_source'});
   try{const r=await fetch('https://api.firecrawl.dev/v2/scrape',{method:'POST',headers:{Authorization:'Bearer '+process.env.FIRECRAWL_API_KEY,'Content-Type':'application/json'},body:JSON.stringify({url:url.href,formats:['markdown'],onlyMainContent:true}),signal:AbortSignal.timeout(18000)});const j=await r.json();if(!r.ok)return reply(res,502,{error:'scrape_failed'});const markdown=String(j.data?.markdown||'');
+  if(/our systems have detected unusual activity|this page checks to see if it.s really you|we.re checking|verify you are human|attention required.*cloudflare|captcha|access denied|enable javascript to continue/i.test(markdown))return reply(res,422,{error:'source_blocked'});
+  if(markdown.trim().length<50)return reply(res,422,{error:'no_lyrics_found'});
   const clean=markdown.split('\n').map(line=>line
     .replace(/!\[[^\]]*\]\([^)]*\)/g,'')
     .replace(/\[([^\]]+)\]\([^)]*\)/g,'$1')
@@ -36,7 +38,7 @@ http.createServer(async(req,res)=>{
     .trim()).filter(line=>line&&!/^\d+\s+Contributors?\b/i.test(line)&&!/^(Embed|You might also like|See .* Live|Get tickets|Sign up|Log in|Read More)$/i.test(line));
   const startAt=clean.findIndex(line=>/^\[?(Verse\s*\d*|Chorus|Intro|Outro|Bridge|Pre-Chorus|Refrain)\]?/i.test(line));
   const selected=(startAt>=0?clean.slice(startAt):clean).filter(line=>!/cookie|privacy policy|advertisement|subscribe|copyright|terms of service/i.test(line));
-  const excerpt=selected.join('\n').slice(0,180).trim();
+  const excerpt=selected.join('\n').slice(0,180).trim();if(!excerpt||/our systems have detected unusual activity|this page checks to see if|we.re checking|captcha/i.test(excerpt))return reply(res,422,{error:'source_blocked'});
   return reply(res,200,{excerpt,url:url.href})}catch{return reply(res,502,{error:'scrape_failed'})}
  }
  if(path==='/song-search'){

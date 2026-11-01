@@ -28,18 +28,17 @@ http.createServer(async(req,res)=>{
   try{const r=await fetch('https://api.firecrawl.dev/v2/scrape',{method:'POST',headers:{Authorization:'Bearer '+process.env.FIRECRAWL_API_KEY,'Content-Type':'application/json'},body:JSON.stringify({url:url.href,formats:['markdown'],onlyMainContent:true}),signal:AbortSignal.timeout(18000)});const j=await r.json();if(!r.ok)return reply(res,502,{error:'scrape_failed'});const markdown=String(j.data?.markdown||'');
   if(/our systems have detected unusual activity|this page checks to see if it.s really you|we.re checking|verify you are human|attention required.*cloudflare|captcha|access denied|enable javascript to continue/i.test(markdown))return reply(res,422,{error:'source_blocked'});
   if(markdown.trim().length<50)return reply(res,422,{error:'no_lyrics_found'});
-  const clean=markdown.split('\n').map(line=>line
-    .replace(/!\[[^\]]*\]\([^)]*\)/g,'')
-    .replace(/\[([^\]]+)\]\([^)]*\)/g,'$1')
-    .replace(/https?:\/\/\S+/g,'')
-    .replace(/^\s{0,3}#{1,6}\s*/,'')
-    .replace(/\*\*/g,'')
-    .replace(/^\s*\d+\s+Contributors?\b.*$/i,'')
-    .trim()).filter(line=>line&&!/^\d+\s+Contributors?\b/i.test(line)&&!/^(Embed|You might also like|See .* Live|Get tickets|Sign up|Log in|Read More)$/i.test(line));
-  const startAt=clean.findIndex(line=>/^\[?(Verse\s*\d*|Chorus|Intro|Outro|Bridge|Pre-Chorus|Refrain)\]?/i.test(line));
-  const selected=(startAt>=0?clean.slice(startAt):clean).filter(line=>!/cookie|privacy policy|advertisement|subscribe|copyright|terms of service/i.test(line));
-  const excerpt=selected.join('\n').slice(0,180).trim();if(!excerpt||/our systems have detected unusual activity|this page checks to see if|we.re checking|captcha/i.test(excerpt))return reply(res,422,{error:'source_blocked'});
-  return reply(res,200,{excerpt,url:url.href})}catch{return reply(res,502,{error:'scrape_failed'})}
+  const rows=markdown.split('\n').map(line=>line.replace(/!\[[^\]]*\]\([^)]*\)/g,'').replace(/\[([^\]]+)\]\([^)]*\)/g,'$1').replace(/https?:\/\/\S+/g,'').replace(/^\s{0,3}#{1,6}\s*/,'').replace(/\*\*/g,'').trim());
+  const marker=/^\[?(?:Verse(?:\s+\d+)?(?:\s*:\s*[^]]+)?|Chorus|Pre-Chorus|Post-Chorus|Intro|Outro|Bridge|Refrain)(?:\s*:\s*[^]]+)?\]?$/i;
+  const bad=/\b(?:contributors?|translations?|producers?|views?|viewers?|track\s+\d+|release date|credits|embed|you might also like|lyrics meaning|about the song|read more|sign up|log in|verified|spotify|apple music|advertisement|copyright)\b/i;
+  const startAt=rows.findIndex(line=>marker.test(line));
+  if(startAt<0)return reply(res,422,{error:'lyrics_not_identified'});
+  const selected=[];
+  for(let i=startAt;i<rows.length;i++){const line=rows[i];if(!line){if(selected.length&&selected[selected.length-1]!=='')selected.push('');continue}if(marker.test(line)){if(selected.length)selected.push('');continue}if(bad.test(line)||/^\d+(?:\.\d+)?[MK]?\s*(?:views?|viewers?)$/i.test(line))break;if(line.length>160||/[{}<>]/.test(line))break;selected.push(line);if(selected.join('\n').length>250)break}
+  const excerpt=selected.join('\n').trim().slice(0,180);
+  if(excerpt.length<30||selected.filter(Boolean).length<2)return reply(res,422,{error:'lyrics_not_identified'});
+  return reply(res,200,{excerpt,url:url.href})
+  }catch{return reply(res,502,{error:'scrape_failed'})}
  }
  if(path==='/song-search'){
   if(!process.env.FIRECRAWL_API_KEY)return reply(res,503,{error:'firecrawl_not_configured'});

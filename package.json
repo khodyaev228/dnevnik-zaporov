@@ -1,0 +1,8 @@
+{
+  "private": true,
+  "name": "pipiska-ai",
+  "version": "1.0.0",
+  "dependencies": {
+    "pg": "^8.13.1"
+  }
+}

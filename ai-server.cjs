@@ -18,8 +18,15 @@ http.createServer(async(req,res)=>{
  const path=new URL(req.url,'http://localhost').pathname;
  if(req.method==='OPTIONS'){res.writeHead(204,{'Access-Control-Allow-Origin':ORIGIN,'Access-Control-Allow-Methods':'POST, OPTIONS','Access-Control-Allow-Headers':'Content-Type','Vary':'Origin'});return res.end()}
  if((path==='/'||path==='/health')&&req.method==='GET')return reply(res,200,{ok:true,configured:!!process.env.OPENAI_API_KEY,service:'PIPISKA AI'});
- if(!['/check','/translate'].includes(path)||req.method!=='POST')return reply(res,404,{error:'not_found'});
+ if(!['/check','/translate','/song-search'].includes(path)||req.method!=='POST')return reply(res,404,{error:'not_found'});
  if(req.headers.origin!==ORIGIN)return reply(res,403,{error:'origin'});
+ if(path==='/song-search'){
+  if(!process.env.FIRECRAWL_API_KEY)return reply(res,503,{error:'firecrawl_not_configured'});
+  let raw='';for await(const chunk of req){raw+=chunk;if(raw.length>4000)return reply(res,413,{error:'too_large'})}
+  let q='';try{q=String(JSON.parse(raw).query||'').trim().slice(0,180)}catch{}
+  if(!q)return reply(res,400,{error:'missing_query'});
+  try{const r=await fetch('https://api.firecrawl.dev/v2/search',{method:'POST',headers:{Authorization:'Bearer '+process.env.FIRECRAWL_API_KEY,'Content-Type':'application/json'},body:JSON.stringify({query:q+' lyrics',limit:5,sources:[{type:'web'}],scrapeOptions:{formats:[]}}),signal:AbortSignal.timeout(12000)});const j=await r.json();if(!r.ok)return reply(res,r.status===429?429:502,{error:'firecrawl_unavailable'});const hits=Array.isArray(j.data?.web)?j.data.web:Array.isArray(j.data)?j.data:[];return reply(res,200,{results:hits.filter(x=>/^https?:\/\//.test(x.url||'')).slice(0,5).map(x=>({title:String(x.title||'Источник').slice(0,180),url:x.url,description:String(x.description||'').slice(0,240)}))})}catch(e){return reply(res,502,{error:'firecrawl_unavailable'})}
+ }
  if(!process.env.OPENAI_API_KEY)return reply(res,503,{error:'not_configured'});
  const now=new Date(),currentMonth=now.toISOString().slice(0,7);
  if(month!==currentMonth){month=currentMonth;clients.clear()}

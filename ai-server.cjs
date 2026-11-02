@@ -55,7 +55,7 @@ http.createServer(async(req,res)=>{
   const s=data.subscription,settings=data.settings||{};
   if(!s||typeof s.endpoint!=='string'||!s.endpoint.startsWith('https://')||!s.keys?.p256dh||!s.keys?.auth)return reply(res,400,{error:'subscription'});
   const every=Number(settings.every),start=String(settings.start||''),end=String(settings.end||''),zone=String(settings.timezone||'');
-  if(![60,120,180,240].includes(every)||!/^([01]\\d|2[0-3]):[0-5]\\d$/.test(start)||!/^([01]\\d|2[0-3]):[0-5]\\d$/.test(end)||!validZone(zone))return reply(res,400,{error:'settings'});
+  if(![60,120,180,240,1440].includes(every)||![start,end].every(t=>/^\d{2}:\d{2}$/.test(t)&&Number(t.slice(0,2))<24&&Number(t.slice(3))<60)||!validZone(zone))return reply(res,400,{error:'settings'});
   await db.query(`INSERT INTO pipiska_push_subscriptions(endpoint,subscription,enabled,every_minutes,start_time,end_time,timezone) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(endpoint) DO UPDATE SET subscription=$2,enabled=$3,every_minutes=$4,start_time=$5,end_time=$6,timezone=$7,updated_at=now()`,[s.endpoint,JSON.stringify(s),!!settings.on,every,start,end,zone]);
   return reply(res,200,{ok:true});
  }

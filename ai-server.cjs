@@ -1,4 +1,7 @@
 const http=require('node:http');
+const webpush=require('web-push');
+const pushReady=!!(process.env.VAPID_PUBLIC_KEY&&process.env.VAPID_PRIVATE_KEY);
+if(pushReady)webpush.setVapidDetails('mailto:notifications@pipiska.onrender.com',process.env.VAPID_PUBLIC_KEY,process.env.VAPID_PRIVATE_KEY);
 let Pool;
 try{({Pool}=require('pg'))}catch{require('node:child_process').execFileSync('npm',['install','--omit=dev','--no-audit','--no-fund'],{cwd:__dirname,stdio:'inherit'});({Pool}=require('pg'))}
 const db=new Pool({connectionString:process.env.DATABASE_URL,ssl:{rejectUnauthorized:false},max:3});
@@ -7,6 +10,27 @@ async function reserveBudget(month,amount){if(!await ready)return false;const c=
 async function settleBudget(month,reservation,actual){await db.query('UPDATE pipiska_ai_budget SET reserved_usd=GREATEST(0,reserved_usd-$2),spent_usd=spent_usd+$3 WHERE month=$1',[month,reservation,actual])}
 
 const PORT=Number(process.env.PORT||10000);
+const pushDbReady=db.query(`CREATE TABLE IF NOT EXISTS pipiska_push_subscriptions (endpoint TEXT PRIMARY KEY, subscription JSONB NOT NULL, enabled BOOLEAN NOT NULL DEFAULT TRUE, every_minutes INT NOT NULL DEFAULT 60, start_time TEXT NOT NULL DEFAULT '10:00', end_time TEXT NOT NULL DEFAULT '20:00', timezone TEXT NOT NULL DEFAULT 'Europe/Moscow', last_slot TEXT, updated_at TIMESTAMPTZ NOT NULL DEFAULT now())`).then(()=>true).catch(e=>{console.error('Push DB unavailable',e.message);return false});
+function validZone(z){try{new Intl.DateTimeFormat('en',{timeZone:z});return true}catch{return false}}
+async function dispatchPush(){
+ if(!pushReady||!await pushDbReady)return;
+ const rows=await db.query('SELECT * FROM pipiska_push_subscriptions WHERE enabled=true');
+ for(const row of rows.rows){
+  try{
+   const parts=Object.fromEntries(new Intl.DateTimeFormat('en-GB',{timeZone:row.timezone,year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).formatToParts(new Date()).map(p=>[p.type,p.value]));
+   const minute=Number(parts.hour)*60+Number(parts.minute);
+   const start=Number(row.start_time.slice(0,2))*60+Number(row.start_time.slice(3));
+   const end=Number(row.end_time.slice(0,2))*60+Number(row.end_time.slice(3));
+   if(minute<start||minute>end||minute<start+row.every_minutes*Math.floor((minute-start)/row.every_minutes)||((minute-start)%row.every_minutes)>1)continue;
+   const slot=parts.year+'-'+parts.month+'-'+parts.day+'T'+parts.hour+':'+String(start+Math.floor((minute-start)/row.every_minutes)*row.every_minutes).padStart(4,'0');
+   const claimed=await db.query('UPDATE pipiska_push_subscriptions SET last_slot=$2 WHERE endpoint=$1 AND last_slot IS DISTINCT FROM $2 RETURNING subscription',[row.endpoint,slot]);
+   if(!claimed.rowCount)continue;
+   try{await webpush.sendNotification(claimed.rows[0].subscription,JSON.stringify({title:'PIPISKA · Practice time',body:'Пора повторить английские слова'}))}catch(e){if(e.statusCode===404||e.statusCode===410)await db.query('DELETE FROM pipiska_push_subscriptions WHERE endpoint=$1',[row.endpoint]);else console.error('Push send failed',e.statusCode||e.message)}
+  }catch(e){console.error('Push scheduler error',e.message)}
+ }
+}
+setInterval(()=>dispatchPush().catch(e=>console.error(e)),30000);
+setTimeout(()=>dispatchPush().catch(e=>console.error(e)),5000);
 const ORIGIN='https://pipiska.onrender.com';
 const MODEL='gpt-4.1-mini';
 const INPUT_RATE=0.40/1000000,OUTPUT_RATE=1.60/1000000;
@@ -18,6 +42,29 @@ http.createServer(async(req,res)=>{
  const path=new URL(req.url,'http://localhost').pathname;
  if(req.method==='OPTIONS'){res.writeHead(204,{'Access-Control-Allow-Origin':ORIGIN,'Access-Control-Allow-Methods':'POST, OPTIONS','Access-Control-Allow-Headers':'Content-Type','Vary':'Origin'});return res.end()}
  if((path==='/'||path==='/health')&&req.method==='GET')return reply(res,200,{ok:true,configured:!!process.env.OPENAI_API_KEY,service:'PIPISKA AI'});
+ if(path==='/push/public-key'&&req.method==='GET')return reply(res,200,{publicKey:pushReady?process.env.VAPID_PUBLIC_KEY:null});
+ if(path==='/push/subscribe'&&req.method==='POST'){
+  if(req.headers.origin!==ORIGIN)return reply(res,403,{error:'origin'});
+  if(!pushReady||!await pushDbReady)return reply(res,503,{error:'push_unavailable'});
+  let raw='';for await(const chunk of req){raw+=chunk;if(raw.length>5000)return reply(res,413,{error:'too_large'})}
+  let data;try{data=JSON.parse(raw)}catch{return reply(res,400,{error:'json'})}
+  const s=data.subscription,settings=data.settings||{};
+  if(!s||typeof s.endpoint!=='string'||!s.endpoint.startsWith('https://')||!s.keys?.p256dh||!s.keys?.auth)return reply(res,400,{error:'subscription'});
+  const every=Number(settings.every),start=String(settings.start||''),end=String(settings.end||''),zone=String(settings.timezone||'');
+  if(![60,120,180,240].includes(every)||!/^([01]\\d|2[0-3]):[0-5]\\d$/.test(start)||!/^([01]\\d|2[0-3]):[0-5]\\d$/.test(end)||!validZone(zone))return reply(res,400,{error:'settings'});
+  await db.query(`INSERT INTO pipiska_push_subscriptions(endpoint,subscription,enabled,every_minutes,start_time,end_time,timezone) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(endpoint) DO UPDATE SET subscription=$2,enabled=$3,every_minutes=$4,start_time=$5,end_time=$6,timezone=$7,updated_at=now()`,[s.endpoint,JSON.stringify(s),!!settings.on,every,start,end,zone]);
+  return reply(res,200,{ok:true});
+ }
+ if(path==='/push/test'&&req.method==='POST'){
+  if(req.headers.origin!==ORIGIN)return reply(res,403,{error:'origin'});
+  if(!pushReady||!await pushDbReady)return reply(res,503,{error:'push_unavailable'});
+  let raw='';for await(const chunk of req){raw+=chunk;if(raw.length>5000)return reply(res,413,{error:'too_large'})}
+  let s;try{s=JSON.parse(raw).subscription}catch{}
+  if(!s?.endpoint||!s.keys?.p256dh||!s.keys?.auth)return reply(res,400,{error:'subscription'});
+  const known=await db.query('SELECT 1 FROM pipiska_push_subscriptions WHERE endpoint=$1',[s.endpoint]);
+  if(!known.rowCount)return reply(res,404,{error:'not_registered'});
+  try{await webpush.sendNotification(s,JSON.stringify({title:'PIPISKA',body:'Тестовое уведомление работает!'}));return reply(res,200,{ok:true})}catch(e){return reply(res,502,{error:'push_failed',status:e.statusCode||null})}
+ }
  if(!['/check','/translate','/song-search','/song-excerpt'].includes(path)||req.method!=='POST')return reply(res,404,{error:'not_found'});
  if(req.headers.origin!==ORIGIN)return reply(res,403,{error:'origin'});
  if(path==='/song-excerpt'){

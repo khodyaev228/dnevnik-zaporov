@@ -1,5 +1,9 @@
 const http=require('node:http');
-const webpush=require('web-push');
+let webpush;
+try { webpush=require('web-push'); } catch (error) {
+  require('node:child_process').execFileSync('npm',['install','--omit=dev'],{cwd:__dirname,stdio:'inherit'});
+  webpush=require('web-push');
+}
 const pushReady=!!(process.env.VAPID_PUBLIC_KEY&&process.env.VAPID_PRIVATE_KEY);
 if(pushReady)webpush.setVapidDetails('mailto:notifications@pipiska.onrender.com',process.env.VAPID_PUBLIC_KEY,process.env.VAPID_PRIVATE_KEY);
 let Pool;

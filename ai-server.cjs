@@ -30,7 +30,7 @@ async function dispatchPush(){
    const slot=parts.year+'-'+parts.month+'-'+parts.day+'T'+parts.hour+':'+String(start+Math.floor((minute-start)/row.every_minutes)*row.every_minutes).padStart(4,'0');
    const claimed=await db.query('UPDATE pipiska_push_subscriptions SET last_slot=$2 WHERE endpoint=$1 AND last_slot IS DISTINCT FROM $2 RETURNING subscription',[row.endpoint,slot]);
    if(!claimed.rowCount)continue;
-   try{await webpush.sendNotification(claimed.rows[0].subscription,JSON.stringify({title:'PIPISKA · Practice time',body:'Переведи на русский: '+pushWords[Math.floor(Math.random()*pushWords.length)][0]}))}catch(e){if(e.statusCode===404||e.statusCode===410)await db.query('DELETE FROM pipiska_push_subscriptions WHERE endpoint=$1',[row.endpoint]);else console.error('Push send failed',e.statusCode||e.message)}
+   try{await webpush.sendNotification(claimed.rows[0].subscription,JSON.stringify((()=>{const word=pushWords[Math.floor(Math.random()*pushWords.length)][0];return {title:'PIPISKA · Practice time',body:'Переведи на русский: '+word,word}})()))}catch(e){if(e.statusCode===404||e.statusCode===410)await db.query('DELETE FROM pipiska_push_subscriptions WHERE endpoint=$1',[row.endpoint]);else console.error('Push send failed',e.statusCode||e.message)}
   }catch(e){console.error('Push scheduler error',e.message)}
  }
 }
@@ -68,7 +68,7 @@ http.createServer(async(req,res)=>{
   if(!s?.endpoint||!s.keys?.p256dh||!s.keys?.auth)return reply(res,400,{error:'subscription'});
   const known=await db.query('SELECT 1 FROM pipiska_push_subscriptions WHERE endpoint=$1',[s.endpoint]);
   if(!known.rowCount)return reply(res,404,{error:'not_registered'});
-  try{await webpush.sendNotification(s,JSON.stringify({title:'PIPISKA',body:'Переведи на русский: '+pushWords[Math.floor(Math.random()*pushWords.length)][0]}));return reply(res,200,{ok:true})}catch(e){return reply(res,502,{error:'push_failed',status:e.statusCode||null})}
+  try{await webpush.sendNotification(s,JSON.stringify((()=>{const word=pushWords[Math.floor(Math.random()*pushWords.length)][0];return {title:'PIPISKA',body:'Переведи на русский: '+word,word}})()));return reply(res,200,{ok:true})}catch(e){return reply(res,502,{error:'push_failed',status:e.statusCode||null})}
  }
  if(!['/check','/translate','/song-search','/song-excerpt'].includes(path)||req.method!=='POST')return reply(res,404,{error:'not_found'});
  if(req.headers.origin!==ORIGIN)return reply(res,403,{error:'origin'});

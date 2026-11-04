@@ -27,7 +27,7 @@ async function dispatchPush(){
    const start=Number(row.start_time.slice(0,2))*60+Number(row.start_time.slice(3));
    const end=Number(row.end_time.slice(0,2))*60+Number(row.end_time.slice(3));
    if(minute<start||minute>end||minute<start+row.every_minutes*Math.floor((minute-start)/row.every_minutes)||((minute-start)%row.every_minutes)>1)continue;
-   const slot=parts.year+'-'+parts.month+'-'+parts.day+'T'+parts.hour+':'+String(start+Math.floor((minute-start)/row.every_minutes)*row.every_minutes).padStart(4,'0');
+   const slotMinute=start+Math.floor((minute-start)/row.every_minutes)*row.every_minutes;const slot=parts.year+'-'+parts.month+'-'+parts.day+'T'+String(Math.floor(slotMinute/60)).padStart(2,'0')+':'+String(slotMinute%60).padStart(2,'0');
    const claimed=await db.query('UPDATE pipiska_push_subscriptions SET last_slot=$2 WHERE endpoint=$1 AND last_slot IS DISTINCT FROM $2 RETURNING subscription',[row.endpoint,slot]);
    if(!claimed.rowCount)continue;
    try{await webpush.sendNotification(claimed.rows[0].subscription,JSON.stringify((()=>{const word=pushWords[Math.floor(Math.random()*pushWords.length)][0];return {title:'PIPISKA · Practice time',body:'Переведи на русский: '+word,word}})()))}catch(e){if(e.statusCode===404||e.statusCode===410)await db.query('DELETE FROM pipiska_push_subscriptions WHERE endpoint=$1',[row.endpoint]);else console.error('Push send failed',e.statusCode||e.message)}
